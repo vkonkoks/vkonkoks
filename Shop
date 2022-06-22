@@ -1,0 +1,251 @@
+app.js
+
+const express = require('express');
+const exphbs = require('express-handlebars'); const bodyParser = require('body-parser'); require('dotenv').config();
+const { Pool } = require('pg');
+const pool = new Pool();
+pool.query('select now()', (err, res) => { if (err) throw err; console.log('Connected to DB');
+});
+const app = express();
+const port = process.env.PORT || 5000; app.use(bodyParser.urlencoded({ extended: false })) app.use(bodyParser.json());
+//Static files
+app.use(express.static('public'));
+//Templating Engine
+app.engine('hbs', exphbs({ extname: '.hbs' })); app.set('view engine', 'hbs');
+const routes = require('./server/routes/manager'); const fileUpload = require('express-fileupload'); app.use(fileUpload());
+app.use('/', routes);
+app.listen(port, () => console.log(`Listening on port ${port}`));
+
+manager.js
+const express = require('express');
+const router = express.Router();
+const managerController = require('../controllers/managerController'); const departmentController = require('../controllers/departmentController');
+// choosing function inside controller
+router.get('/', managerController.viewAll);
+router.post('/', managerController.findWorker); router.get('/addWorker', managerController.formWorker); router.post('/addWorker', managerController.createWorker); router.get('/editWorker/:id', managerController.editWorker); router.post('/editWorker/:id', managerController.updateWorker); router.get('/viewWorker/:id', managerController.viewWorker); router.get('/:id',managerController.deleteWorker);
+router.post('/adddepartment', departmentController.formDep); router.post('/adddepartment', departmentController.createDep); router.get('/editdepartment/:dep_id', departmentController.editDep); router.post('/editdepartment/:dep_id', departmentController.updateDep); router.get('/viewdepartment/:dep_id', departmentController.viewDep); router.get('/:dep_id',departmentController.deleteDep);
+router.get('', (req, res) => { res.render('home');
+});
+module.exports = router;
+
+manager.Controller.js
+const { Pool } = require("pg");
+const pool = new Pool();
+const reset_seq =
+"select setval('workers_id_seq',(select max(id) from workers));";
+exports.viewAll = (req, res) => { pool.connect((err, client, release) => {
+if (err) throw err.stack; console.log("Connected to DB in Controller");
+client.query(reset_seq, (err, results) => { if (!err) {
+} else { console.log(err.stack);
+} });
+client.query(
+"select w.id, w.first_name, w.last_name, w.post, w.salary, w.hire_date, d.dep_name
+from workers w left outer join department d on w.dep_id = d.dep_id where status = 'Работает' order by w.id; ",
+(err, man_results) => { if (!err) {
+manData = man_results.rows; client.query(
+"select * from department order by dep_id; ", (err, dep_results) => {
+                            release();
+                            if (!err) {
+dbDepData = dep_results.rows;
+res.render("home", { manData, dbDepData }); } else {
+console.log(err.stack); }
+} );
+} else { console.log(err.stack);
+} }
+); });
+};
+exports.findWorker = (req, res) => {
+let searchTerm = req.body.search; pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query(
+"select w.id, w.first_name, w.last_name, w.post, w.salary, w.hire_date, d.dep_name
+from workers w left outer join department d on w.dep_id = d.dep_id where status = 'Работает' and w.first_name like $1 or w.last_name like $1 order by w.id; ", ['%' + searchTerm + '%'],
+(err, man_results) => { if (!err) {
+manData = man_results.rows; client.query(
+"select * from department order by dep_id; ", (err, dep_results) => {
+release();
+if (!err) {
+dbDepData = dep_results.rows; res.render("home", { manData, dbDepData });
+} else { console.log(err.stack);
+} }
+); } else {
+console.log(err.stack); }
+} );
+}); };
+exports.formWorker = (req, res) => { res.render("add-user");
+};
+exports.createWorker = (req, res) => {
+const { first_name, last_name, post, salary, hire_date, dep_name } = req.body;
+console.log(req.body);
+// the connection
+pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query(reset_seq, (err, results) => { if (!err) {
+} else { console.log(err.stack);
+} });
+client.query(
+"insert into workers (id, first_name, last_name, post, salary, hire_date, dep_id)
+values (default, $1, $2, $3, $4, $5, default);", [first_name, last_name, post, salary, hire_date], (err, results) => {
+if (!err) { client.query(
+"update workers set dep_id = subquery.dep_id from (select dep_id from department where dep_name = $1 ) as subquery;",
+[dep_name],
+(err, results) => {
+                            release();
+                            if (!err) {
+res.render("add- user", { alert: "Worker added successfully." });
+} else { console.log(err.stack);
+} }
+); } else {
+console.log(err.stack); }
+console.log("The data from Worker table: \n", results); }
+); });
+};
+exports.editWorker = (req, res) => { pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query(
+"select w.id, w.first_name, w.last_name, w.post, w.salary, w.hire_date, d.dep_name
+from workers w left outer join department d on w.dep_id = d.dep_id where w.id = $1;", [req.params.id],
+(err, results) => { release();
+if (!err) {
+manData = results.rows; res.render("edit-user", { manData });
+} else { console.log(err.stack);
+}
+//console.log(results);
+} );
+}); };
+exports.updateWorker = (req, res) => {
+const { first_name, last_name, post, salary, hire_date, dep_name } = req.body;
+console.log("Connected to DB in updateWorker"); pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query(
+"update workers set first_name = $1, last_name = $2, post = $3, salary = $4, hire_
+date = $5, dep_id = default where id = $6;",
+[first_name, last_name, post, salary, hire_date, req.params.id], (err, results) => {
+if (!err) { client.query(
+"update workers set dep_id = subquery.dep_id from (select dep_id from department where dep_name = $1 ) as subquery where id = $2;",
+[dep_name, req.params.id], (err, results) => {
+if (!err) { client.query(
+"select w.id, w.first_name, w.last_name, w.post, w.salary, w.hire_date, d.dep_name from workers w left outer join department d on w.dep_id = d.dep_id wh
+ere w.id = $1;",
+user", { manData,
+[req.params.id], (err, results) => {
+                                        release();
+                                        if (!err) {
+manData = results.rows;
+res.render("edit- has been updated.` }); } else {
+console.log(err.stack); }
+} );
+} else { console.log(err.stack);
+} });
+} else { console.log(err.stack);
+} });
+exports.viewWorker = (req, res) => { pool.connect((err, client, release) => {
+}); };
+if (err) throw err.stack;
+client.query(
+"select w.id, w.first_name, w.last_name, w.post, w.salary, w.hire_date, d.dep_name
+from workers w left outer join department d on w.dep_id = d.dep_id where w.id = $1;", [req.params.id],
+(err, results) => { release();
+if (!err) {
+manData = results.rows; res.render("view-user", { manData });
+} else { console.log(err.stack);
+} }
+); });
+};
+exports.deleteWorker = (req, res) => { pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query('update workers set status = $1 where id = $2', ['Не работает', req.param s.id], (err, results) => {
+if (!err) {
+let removedWorker = encodeURIComponent('Работник успешно удален.'); res.redirect('/?removed=' + removedWorker);
+} else { console.log(err);
+} }
+); });
+};
+
+departmentController.js
+const { Pool } = require("pg");
+const pool = new Pool();
+const reset_seq =
+"select setval('dep_id_seq',(select max(dep_id) from department));";
+exports.formDep = (req, res) => { res.render("add-dep");
+};
+exports.createDep = (req, res) => {
+const { dep_id, dep_name, dep_location, dep_descr } = req.body;
+console.log(req.body);
+// the connection
+pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query(reset_seq, (err, results) => { if (!err) {
+} else { console.log(err.stack);
+} });
+client.query(
+"insert into department values (default, $1, $2, $3, default);", [dep_name, dep_location, dep_descr],
+(err, results) => {
+if (!err) {
+res.render("add-dep", { alert: "Department added successfully." });
+} else { console.log(err.stack);
+}
+console.log("The data from dep table: \n", results); }
+); });
+};
+= (req, res) => { if (err) throw err.stack;
+client.query(
+"select * from department where dep_id = $1;", [req.params.dep_id],
+(err, results) => {
+                release();
+                if (!err) {
+depEditData = results.rows;
+res.render("edit-dep", { depEditData }); } else {
+console.log(err.stack); }
+//console.log(results);
+} );
+}); };
+exports.editDep
+pool.connect((err, client, release) => {
+exports.updateDep = (req, res) => {
+const { dep_name, dep_location, dep_descr } = req.body; pool.connect((err, client, release) => {
+if (err) throw err.stack;
+console.log("Executing Update query in dep"); client.query(
+id = $4",
+"update department set dep_name = $1, dep_location = $2, dep_descr = $3 where dep_
+[dep_name, dep_location, dep_descr, req.params.dep_id], (err, results) => {
+if (!err) {
+if (err) throw err.stack; client.query(
+"select * from department where dep_name = $1; ", [req.params.dep_id],
+(err, results) => {
+                release();
+                if (!err) {
+depEditData = results.rows;
+res.render("edit-
+dep", { depEditData, alert: `${dep_name} has been updated.` });
+} else { console.log(err.stack);
+} }
+); } else {
+console.log(err.stack); }
+} );
+}); };
+exports.viewDep =
+pool.connect((err, client, release) => {
+if (err) throw err.stack; client.query(
+"select * from department where dep_id = $1;", [req.params.dep_id],
+(err, results) => {
+                release();
+                if (!err) {
+depEditData = results.rows;
+res.render("view-dep", { depEditData }); console.log("The data from dep table: \n", results.rows);
+} else { console.log(err.stack);
+} }
+); });
+};
+(req, res) => {
+exports.deleteDep
+pool.connect((err, client, release) => {
+if (err) throw err.stack;
+client.query('delete from department where dep_id = $1;', [req.params.dep_id], (err, r esults) => {
+if (!err) {
+let removedDep = encodeURIComponent('Отдел успешно удален.'); res.redirect('/?removed=' + removedDep);
+} else { console.log(err);
+} }
+);
+= (req, res) => {
+}); };
